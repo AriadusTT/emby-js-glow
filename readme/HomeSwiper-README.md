@@ -77,7 +77,7 @@ https://github.com/user-attachments/assets/829b45c8-e502-4b73-ab57-a72eaffd29d6
 
 1. 确认已装 **CustomCssJS** 插件（见上「前置依赖」）；
 2. Emby 后台 → **设置 → 自定义 CSS/JS（CustomCssJS）**；
-3. 打开 `HomeSwiper.js`，**全选复制**，整份粘贴进去（覆盖旧内容）；
+3. 打开仓库根目录的 [`HomeSwiper.js`](../HomeSwiper.js)，**全选复制**，整份粘贴进去（覆盖旧内容）；
 4. 保存；
 5. 回首页 **Ctrl+F5** 强制刷新。
 
