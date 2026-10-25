@@ -27,35 +27,35 @@
 以下均为 **Emby 4.11 网页端实机录屏**（无声、未加速、未剪辑）。点击封面即可在浏览器里播放原片。
 
 > GitHub 的 README 不渲染内联视频播放器，所以这里用「封面图 + 链接」：点封面 → 打开对应的 mp4。
-> 录屏源文件在 [`src/demo/`](../src/demo)，封面取自视频原帧，放在 [`readme/assets/demo/`](assets/demo)。
+> 录屏源文件在 [`demo/`](../demo)，封面取自视频原帧，放在 [`readme/assets/demo/`](assets/demo)。
 
 ### 1. 本地预告片轮播 · 23s
 
-[![本地预告片轮播演示](assets/demo/trailer-carousel.jpg)](../src/demo/本地trailer轮播.mp4)
+[![本地预告片轮播演示](assets/demo/trailer-carousel.jpg)](../demo/本地trailer轮播.mp4)
 
 读取条目 `trailers` 目录下的**本地预告片**，有声优先、被拦截则降级静音。播完自动翻到下一张；右侧视频与左侧标题／评分／按钮同时切换，位置一个像素都不动。
 
 ### 2. 图片轮播 · 17s
 
-[![图片轮播演示](assets/demo/image-carousel.jpg)](../src/demo/图片轮播.mp4)
+[![图片轮播演示](assets/demo/image-carousel.jpg)](../demo/图片轮播.mp4)
 
 没有预告片（或设置里关掉「播放预告片」）时的纯图片轮播：剧照铺满整屏、缓慢推近，左侧信息层保持不动。
 
 ### 3. 简介滚动 · 11s
 
-[![简介滚动演示](assets/demo/synopsis-scroll.jpg)](../src/demo/简介滚动.mp4)
+[![简介滚动演示](assets/demo/synopsis-scroll.jpg)](../demo/简介滚动.mp4)
 
 简介放不下时缓慢上滚（提词器式），滚到底停一下再回到开头；放得下就完全不动——不裁剪、不加省略号。
 
 ### 4. 导航栏快速进入媒体库 · 10s
 
-[![导航栏快速进入媒体库演示](assets/demo/nav-library.jpg)](../src/demo/导航栏快速进入媒体库.mp4)
+[![导航栏快速进入媒体库演示](assets/demo/nav-library.jpg)](../demo/导航栏快速进入媒体库.mp4)
 
 顶栏的**媒体库条**挂在 Emby 原生 `headerMiddle` 上，点库名直接进那个库（文件夹仍走 Emby 自己的 list 路由），不用先退回首页再点。
 
 ### 5. 独立设置 · 5s
 
-[![独立设置演示](assets/demo/settings-panel.jpg)](../src/demo/独立设置.mp4)
+[![独立设置演示](assets/demo/settings-panel.jpg)](../demo/独立设置.mp4)
 
 设置面板只写本机：**只对本客户端生效**（存在浏览器本地），不影响别人的界面。改完保存立即生效，无需刷新。
 
