@@ -12,6 +12,9 @@ node_modules/
 # 临时调试脚本
 **/.build/_t.mjs
 
+# 设计文档（仅本地保留，不入库）
+**/.build/_sec65.md
+
 # 系统垃圾
 Thumbs.db
 Desktop.ini

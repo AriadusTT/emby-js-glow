@@ -1,0 +1,1531 @@
+/* ===========================================================================
+ * HomeSwiper — 插件样式源码（对应 CUSTOM_CSS）
+ * ---------------------------------------------------------------------------
+ * 纯 CSS。构建时由 .build/assemble.js 经 lightningcss 摊平 + downlevel(chrome100) + 压缩，
+ * 再以 JSON.stringify 序列化进 .gen-css.mjs，最终内联进 swiper.js。
+ *
+ * 约定：
+ *   - 所有自定义选择器统一加 body.hs-home 前缀，避免泄漏到非首页视图。
+ *   - 一律自带固定色，不读 Emby 主题变量；主题色以 --hs-* 变量集中在 body.hs-home 下，
+ *     便于日后真机按"最亮海报帧"定稿（下文数值均为意向值）。
+ *   - 禁用 Chromium 100 不支持的写法（&、:has(、dvh、scrollbar-*、color-mix(、oklch(、
+ *     @container、text-wrap:balance）；隐藏滚动条仅用 ::-webkit-scrollbar 兜底。
+ *   - 四层结构（自下而上）：.swiper(1) → .hs-video(2) → 热区/箭头(3) → .hs-info(4)。
+ * =========================================================================== */
+
+/* ------------------------------------------------------------------ *
+ * 0. 主题变量 + 全局兜底
+ * ------------------------------------------------------------------ */
+
+body.hs-home {
+  --hs-bg: #0a0a0c;                       /* 根容器深底：近黑一档 */
+  --hs-fg: #ffffff;                       /* 主文字 */
+  --hs-accent: #5b8def;                   /* 强调色（进度条 / 徽章描边），单一定值、与深底同源 */
+  --hs-panel-fg: #ffffff;
+
+
+  --hs-arrow-size: clamp(52px, 4.6vw, 80px);  /* 客厅距离：越大越好认，窄窗也有 52 保底 */
+  --hs-hotzone-w: clamp(40px, 6vw, 96px);    /* 左右热区：窄窗 40 起（56 会把文字顶太右） */
+
+  /* —— 信息层标尺（唯一一套，勿在别处另起）——
+     高度：胶囊 22 / 按钮 48 / 标题槽 72；圆角 8。
+     侧距分开写：左侧要让开左箭头热区，右侧不需要（右热区在视口最右端）。 */
+  --hs-btn-h: 48px;
+  --hs-info-pad: 40px;                       /* 按钮行距轮播块底（比原始的 32 略高） */
+  --hs-pill-h: 24px;                         /* 评分 / 分级胶囊高度 */
+  --hs-pad-l: max(clamp(16px, 3vw, 64px), var(--hs-hotzone-w));
+  --hs-pad-r: clamp(16px, 1.6vw, 32px);
+  /* 标题槽中心的纵向位置。**实际值由 JS 写行内变量**（按实测块高算 px，见 layoutVideo）。 */
+  --hs-logo-top: 340px;
+
+  /* 视频面板过渡长度：左=蒙版（透明化，露出剧照），上=覆盖层（压暗到顶栏）。
+     底部覆盖层已按要求去掉（下缘由整块暗角负责）。 */
+  --hs-fade-left: 100px;
+  --hs-fade-top: 110px;
+
+  /* 覆盖官方 Swiper 变量的默认值（官方在 :root 上定义） */
+  --swiper-navigation-size: clamp(40px, 4vw, 56px);
+  --swiper-navigation-color: #ffffff;
+  --swiper-navigation-top-offset: 50%;
+}
+
+/* 隐藏首页原生 tab 条（真机源码两轮取证：4.11 是 .tabs-viewmenubar、4.7 客户端是 .dockedtabs-tabs）。
+   ⚠ **只留这两个已验证的类名**：
+   - .tabs / .tabBar 是当初猜的兜底名，两轮均证实命不中真 tab 条 ⇒ 只会误伤，已删；
+   - .sectionTitle 是 Emby 原生「区块标题」类名（.sectionTitle{font-size:90%;…}，item.js/dashboard.html
+     用它渲染 <h2 class="sectionTitle …">）⇒ 隐藏它会把「我的媒体库」「继续播放」等原生区块的文字整片抹掉，已删。
+   ⚠ 不要隐藏整个 .headerMiddle —— tab 条挂在 .headerMiddle.headerSection.sectionTabs 里，
+   而 S6 的媒体库条也要挂进 .headerMiddle。不用 :has()（Chromium 100 不支持）。 */
+body.hs-home .tabs-viewmenubar,
+body.hs-home .dockedtabs-tabs {
+  display: none;
+}
+
+/* ★ 媒体库条改为 fixed 覆盖在首行（从 logo 右缘左对齐，与头像/设置同行），**不再**参与顶栏的 flex 布局——
+   原先的 `body.hs-home.hs-libbar .headerLeft{flex-grow:0}` / `.headerMiddle{height:3.1em}`
+   会在特定宽度下把右侧的设置/头像挤到左边（真机已发生），已删除；
+   顶栏布局完全交还 Emby。 */
+
+/* ------------------------------------------------------------------ *
+ * 1. 轮播根容器（视频层之下；它是首图未就绪的兜底底色）
+ * ------------------------------------------------------------------ */
+
+body.hs-home .hs-root {
+  /* B 方案：轮播是**滚动内容里的一块**，不是覆盖层。
+     ⇒ 不再需要 right/top 定位、不再需要 --hs-hero-h/--hs-sb-w，
+        滚动条、高度、滚动全都交还给浏览器。 */
+  position: relative;
+  z-index: 1;                  /* 块内自成层叠上下文：.swiper/视频/箭头/信息层 的 1/2/3/4 分层照旧 */
+  width: 100%;
+  height: 100vh;               /* 只占顶部一屏 */
+  min-height: 420px;
+  margin: 0;
+  /* ★ 透明：图片淡出后要露出**页面本身**（压暗后的背景），而不是我们自己的近黑色 ——
+     否则底部会出现「近黑 → 压暗背景」的第二条接缝。 */
+  background: transparent;
+  color: var(--hs-fg);
+  font-family: inherit;
+  /* ★ 深色背景上必须关掉子像素抗锯齿：否则中文边缘会出现彩色描边（发毛、发糊）。 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: visible;           /* 不能设 overflow:hidden（会裁掉贴边箭头） */
+  box-sizing: border-box;
+  /* ★ 禁止选中 / 图片拖拽：在轮播上拖拽或双击时，标题/简介会被框选成蓝底，
+     看起来像"页面坏了"（真机反馈）。文字本身不需要被复制。 */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+/* 宿主标记类 .hs-host 由 JS 在挂载时加到 .view 上、撤离时移除。
+   ⚠ **绝不要给宿主设 position**：真机实测（4.11 网页端）——我们一旦加
+   `body.hs-home .hs-host{position:relative}` 就会覆盖 Emby 自己给 `.view` 的定位方式，
+   把 `.view` 压成 0 高（父层 body 1274 高、.view 0 高）⇒ Emby 原生首页整片塌成空白。
+   宿主定位交还给 Emby。同理也不要给宿主设 overflow:hidden（会裁掉贴边箭头）。 */
+body.hs-home .hs-host {
+  isolation: isolate;   /* isolation 不是 position，不违反"绝不给宿主设 position"这条约束。
+                           让宿主成为原子层叠单元：其后代（.hs-root）的 z-index 只在宿主内部比较，
+                           不会跑到根层叠上下文里去和 .view 的兄弟 .skinHeader（其规则里无 z-index）
+                           争层叠 —— 否则 .hs-root 的 z-index 有实打实的概率把轮播画到顶栏之上。
+                           语义安全：.view 成为原子绘制单元后，与 .skinHeader 的相对顺序与之前一致（同层、按 DOM 顺序）。 */
+}
+
+/* 导航离开（点 PLAY/DETAIL/库条）开始时的「视觉收起」：立即隐藏轮播与库条，
+   但**不**摘 body.hs-home、不拆 DOM ⇒ 我们的 CSS 继续生效，原生首页不会闪现；
+   真正的 teardown 仍由视图事件负责，回到首页时由 mount() 摘掉 hs-leaving。 */
+/* 离开首页：淡出 + 轻微上移（原来 visibility 瞬间消失，太生硬） */
+body.hs-home .hs-root {
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+body.hs-home.hs-leaving .hs-root,
+body.hs-home.hs-leaving .hs-libbar {
+  opacity: 0;
+  transform: translateY(-8px);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.25s ease,
+    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.25s; /* 淡完再隐藏，避免淡出被截断 */
+}
+body.hs-home .hs-root * {
+  box-sizing: border-box;
+}
+
+/* 右侧那条缝的补块（A 方案·第四版）。
+   前三版的问题都在几何/层序，逐条记下来：
+     ① `.view` 内 + right:0 → **画在内容右缘**，缝（在视图外面）根本没盖到（真机：缝一直是亮的）；
+     ② body 下 + z-index:1 → 盖住滚动条；
+     ③ `.view` 前一个兄弟位 + 不设 z-index → 又落到背景磨砂层之下。
+   现在回到 ① 的位置（.view 第一个子节点、z-index:-1，真机反馈那版观感最好），只把几何修正：
+     向外伸一个滚动条宽（right 取负），宽度 = 100vw − 100%（.view 的 100% 就是「视口 − 滚动条」）。
+   层序：.view 有 isolation ⇒ 负 z-index 在视图背景之上、视图内容（含滚动条）之下。 */
+body.hs-home .hs-gutter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: calc(-1 * (100vw - 100%));
+  width: calc(100vw - 100%);
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--hs-bg, #0e0e12);
+  background-image: linear-gradient(
+    180deg,
+    rgba(14, 14, 18, 0.9) 0%,
+    rgba(14, 14, 18, 0.84) 55%,
+    rgba(14, 14, 18, 0.46) 80%,
+    rgba(14, 14, 18, 0) 100%
+  );
+  background-repeat: no-repeat;
+  background-size: 100% calc(var(--hs-libbar-top, max(1.2em, env(safe-area-inset-top, 0px))) + var(--hs-libbar-h, 3.127em) + 0.9em);
+}
+/* 首页原生分区的排版对齐：Emby 默认字距/字重和轮播不是一套语言。
+   只调排版属性（字号/字重/字距/间距），不碰卡片（卡片类是详情页/库页共用的，风险高）。
+   作用域限定 body.hs-home，其它页面完全不受影响。 */
+body.hs-home .sectionTitle {
+  font-size: clamp(15px, 1.15vw, 19px);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  opacity: 0.96;
+}
+body.hs-home .sectionTitleTextButton,
+body.hs-home .sectionTitle > a {
+  letter-spacing: 0.02em;
+}
+/* 「继续观看」这行要让「看到哪一集」一眼可读：
+   ① 进度条从 .22em 加粗到 4px、主色、圆角（Emby 元素是 .itemProgressBar / _Foreground，
+      卡片的容器是 .cardProgressBarContainer）；
+   ② 集数那行（.cardText-secondary）提亮一档，比标题低但不再隐形。
+   只调颜色/尺寸，不动卡片几何 ⇒ 不会牵连详情页/库页共用的 .card 体系（作用域也已限定首页）。 */
+body.hs-home .itemProgressBar {
+  height: 4px !important;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22) !important;
+  overflow: hidden;
+}
+body.hs-home .itemProgressBarForeground {
+  background-color: var(--hs-accent, #5b8def) !important;
+  border-radius: 999px;
+}
+body.hs-home .cardText-secondary {
+  color: rgba(255, 255, 255, 0.56);
+  letter-spacing: 0.01em;
+}
+/* 首页的背景磨砂层（.backgroundContainer 把当前条目的图模糊后铺满全屏）默认是亮的，
+   而我们的主视觉是深色、底边还要渐隐到页面底色 ⇒ 两者相接会变成「暗→亮」的硬跳（真机反馈）。
+   这里把它压暗一档：整页统一为深色基调，底边过渡才接得上。
+   ⚠ 只作用首页（body.hs-home），详情/库页/设置页不受影响。 */
+/* 首页背景的两层都要压暗：
+   `.backdropContainer`（body 第一个子元素、z-index:-1，通常是模糊后的剧照）
+   `.backgroundContainer`（同一张图的另一层）
+   只压一层的话另一层仍然亮，行区看上去还是「突兀地亮起来」（真机反馈）。 */
+/* ⚠ 用 hs-immersive 而不是 hs-home：进设置页时 hs-home 仍在（设计如此），会连带压暗设置页。 */
+body.hs-immersive .backdropContainer,
+body.hs-immersive .backgroundContainer {
+  opacity: 0.22;
+}
+/* 兜底：首页自身给一个深色底，避免两层都透明时露出浏览器默认底色 */
+body.hs-immersive {
+  background-color: var(--hs-bg, #0a0a0c);
+}
+/* 内容区统一底色（首页沉浸模式）。
+   客户端/手机端用的是蓝色主题底，网页端是黑底 ⇒ 轮播淡出后露出的底色两端不一致，
+   于是网页版看不出缝、客户端却是一条明显的分界。
+   这里把内容区刷成同一个深色，轮播淡出即落在它上面（.hs-root 已透明）。 */
+body.hs-immersive .view {
+  background-color: var(--hs-bg, #0a0a0c);
+}
+body.hs-immersive .sections,
+body.hs-immersive .scrollSlider {
+  background-color: transparent;
+}
+/* 四边暗角（vignette）：让轮播与顶栏/页面/下方分区的衔接不那么硬。
+   层级是关键 —— z-index:2 位于 .swiper(1)/<video>(2) 之上、箭头(3)与信息层(4)之下，
+   所以标题、PLAY/DETAIL、进度条都不会被压暗。pointer-events:none 保证不吃点击与滚轮。
+   强度按「上轻下重」：顶部已有顶栏渐变（.25 即可），底部与信息层 scrim 衔接（.5），
+   左右只做过渡（.4）。要调只要改这四个 alpha。 */
+body.hs-home .hs-root::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(10, 10, 12, 0.25) 0%, rgba(10, 10, 12, 0) 16%),
+    /* 底边：最后 20px 直接用**页面底色**铺实，再淡出 200px ⇒ 与下方分区无缝。
+       之前只做 mask（图淡出），但根容器自身有不透明底色 ⇒ 看起来仍是一条硬边。 */
+    /* 底边过渡：不再渐隐到某个固定颜色（那会和行区的压暗背景差一档，出现第二条缝）。
+       现在只做「图淡出（mask）+ 轻微压暗」：淡出后露出的是页面自己的背景，天然连续。 */
+    linear-gradient(0deg, rgba(10, 10, 12, 0.55) 0, rgba(10, 10, 12, 0) 260px),
+    linear-gradient(90deg, rgba(10, 10, 12, 0.4) 0%, rgba(10, 10, 12, 0) 10%),
+    linear-gradient(270deg, rgba(10, 10, 12, 0.4) 0%, rgba(10, 10, 12, 0) 10%);
+}
+
+
+/* 底图层：.swiper 与 .swiper-slide 背景必须透明（位于视频层之下） */
+body.hs-home .hs-root .swiper {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  /* ★ 底边渐隐：让剧照「溶」进下面的页面底色，而不是切一刀。
+     加在 .swiper（图/视频层）而不是整个根容器 —— 信息层（标题/按钮/进度条）在 z-index 4，
+     不受这层遮罩影响，文字边缘始终清晰。 */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 240px), rgba(0, 0, 0, 0) 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 240px), rgba(0, 0, 0, 0) 100%);
+}
+body.hs-home .hs-root .swiper-wrapper {
+  background: transparent;
+}
+body.hs-home .hs-root .swiper-slide {
+  background: transparent;     /* slide 背景透明，只放 backdrop <img> */
+  overflow: hidden;
+}
+body.hs-home .hs-root .swiper-slide img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* ★ 取景重心：窗口越扁（全屏 21:9 那种）越往上取，否则 cover 会优先切掉人脸的头顶。
+     --hs-obj-y 由 JS 按窗口比例写入（50% / 38% / 30%），横竖屏切换时自动回中。 */
+  object-position: center var(--hs-obj-y, 50%) !important;   /* 防止被其它 img 规则覆盖（真机曾出现不生效） */
+  display: block;
+  user-select: none;
+}
+
+/* ------------------------------------------------------------------ *
+ * 2. 视频层（单元素；右侧 16:9 面板，不做满屏铺底）
+ *   几何全部由 JS 写进 --hs-video-w / --hs-video-h（applyHeroHeight → layoutVideo）：
+ *   高度吃满轮播块、宽度按 16:9 推，右边缘贴齐、垂直居中；左列至少留 TRAILER_MIN_INFO_W。
+ *   不播时宽高为 0 + opacity:0 ⇒ 不占位、不参与 hit-test。
+ * ------------------------------------------------------------------ */
+
+body.hs-home .hs-root .hs-video {
+  position: absolute;
+  /* ★ 高度由 JS 写进 --hs-video-h（= 轮播块高 − 底部留白）。
+     必须是 px：<video> 是替换元素，height:auto 会按自身比例算高度而溢出；
+     height:100% 又会让底部渐隐糊在画面下沿。 */
+  top: var(--hs-video-top, 0px);
+  right: 0;
+  z-index: 2;
+  width: var(--hs-video-w, 0px);
+  height: var(--hs-video-h, 100%);
+  /* 填充方式由 layoutVideo 写入：默认 cover（铺满），极端比例退 contain（不切画面）。
+     裁剪时取景重心略偏上（40%），避免切掉人脸。 */
+  object-fit: var(--hs-video-fit, cover);
+  object-position: var(--hs-video-pos, center 40%);
+  /* ★ 不要黑底：淡出时"黑底 + 左缘蒙版"会形成一条可见的暗竖边（真机反馈像边框）。
+     contain 留边时露出页面底色即可，反而更统一。 */
+  background: transparent;
+  pointer-events: none;
+  /* 进入：**0.8s 淡入**（只动 opacity）。
+     位移 0–520ms，起播 540ms ⇒ 紧接着位移的尾巴开始，读作一段连续的「进入」。
+     退出不用这条过渡：stopTrailer 会加 .is-video-swap（opacity 0 + transition none）⇒ 同帧消失。 */
+  opacity: 0;
+  filter: brightness(1);
+  transform: none;
+  transition: opacity 0.8s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* ==================================================================== *
+ * 播放态（预告片）—— 设计定稿
+ *
+ *   1) **布局不动**：信息块顶部/底部的锚点与非播放态一致，只把高度撑满、
+ *      内容贴底；播放态只改亮度，不该有任何位移。
+ *   2) **边界用蒙版化开**：视频左缘 90px 渐显（淡出处露出底下的剧照）。
+ *      不要用"在视频上压一条暗带"——那会看到一条竖条。
+ *   3) **底部**用一条 260px 缓入渐变推到页面底色；左右两侧渐变不与它相交。
+ *   4) 信息块自己带一层**横向遮罩**（左深右浅、上下羽化），只在文字区域，
+ *      向右伸进视频 36px —— 把明暗台阶推进视频内部，而不是断在边界上。
+ * ==================================================================== */
+
+/* 播放态：信息块的定位/宽度/顺序**与非播放态完全一致** ——
+   它本来就叠在视频层之上（z-index 4 > 2），不需要为视频做任何让步。 */
+/* ★ 信息块是三段绝对定位，flex 不参与排布；这条保留是为了让「播放态不许压缩子项」
+   这条不变量继续成立（简介高度由中段区间决定，超出用渐隐）。 */
+body.hs-home .hs-root.is-trailer .hs-info__inner > * {
+  flex: 0 0 auto;
+}
+
+
+/* 信息块遮罩已随信息层重写迁到第 4 节（三段锚定后单块渐变会断成两截）。 */
+
+
+/* 换源窗口期：元素必须**立刻不可见**。否则上一个视频淡出到一半时 src 被替换，
+   新首帧还没解码 ⇒ 半透明的黑块闪一下（真机：手动切条时左侧闪黑条）。 */
+body.hs-home .hs-root.is-video-swap .hs-video {
+  transition: none;
+  opacity: 0;
+}
+/* 退出瞬时：视频一旦被强制隐藏，它的上下覆盖层也必须同帧消失，不能淡出。 */
+body.hs-home .hs-root.is-video-swap::before {
+  transition: none;
+  opacity: 0;
+}
+
+
+
+/* 视频层：左缘 90px 渐显（蒙版，不是遮罩） */
+body.hs-home .hs-root.is-trailer .hs-video {
+  opacity: 1;
+  filter: brightness(1);
+  transform: none;
+  /* 不写 transition：沿用基础规则的 0.8s 淡入。
+     写 none 会覆盖它 ⇒ 透明度瞬变、直接露出首帧（真机表现为"先出现全黑框"）。 */
+  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 var(--hs-fade-left, 100px));
+  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 var(--hs-fade-left, 100px));
+}
+
+
+
+/* 视频的上下过渡：**只覆盖视频面板**（不是整行）。
+   原来写在 .hs-root::after 上 ⇒ 整行宽都被压暗，播放一开始左侧也跟着变暗（真机反馈"暗一下"）。
+   现在用 ::before，几何与视频面板完全一致。 */
+body.hs-home .hs-root::before {
+  content: "";
+  position: absolute;
+  /* ★ 常驻 + opacity 切换：如果只在 .is-trailer 下存在，它就无法淡入，
+     会以全强度"啪"地出现（顶部 0.86）⇒ 切换时看到一块暗带和它的边界线。 */
+  opacity: 0;
+  transition: opacity 0.8s cubic-bezier(0.22, 0.61, 0.36, 1);
+  top: var(--hs-video-top, 0px);
+  right: 0;
+  width: var(--hs-video-w, 0px);
+  height: var(--hs-video-h, 100%);
+  z-index: 3;
+  pointer-events: none;
+  background-image:
+    linear-gradient(
+      180deg,
+      rgba(10, 10, 12, 0.86) 0%,
+      rgba(10, 10, 12, 0.62) 28%,
+      rgba(10, 10, 12, 0.28) 62%,
+      rgba(10, 10, 12, 0) 100%
+    );
+  background-size: 100% var(--hs-fade-top, 110px);
+  background-position: left top;
+  background-repeat: no-repeat;
+  /* ★ 覆盖层自己也要在左缘渐隐：否则它的左边界是一条硬台阶（顶部最暗处最明显），
+     表现为"上下两角附近有一条竖线"。长度与视频蒙版一致，两者重叠后无缝。 */
+  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 var(--hs-fade-left, 170px));
+  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 var(--hs-fade-left, 170px));
+}
+/* 播放态：与视频同步淡入（1.2s），淡出用 0.6s */
+body.hs-home .hs-root.is-trailer::before {
+  opacity: 1;
+}
+
+/* ------------------------------------------------------------------ *
+ * 视频进度条：细、低饱和（按要求不用亮色）。
+ *   几何跟随视频面板：贴在视频下缘（top = 视频 top + 高度）。
+ *   与视频同步显隐（opacity），不单独做动画。
+ * ------------------------------------------------------------------ */
+body.hs-home .hs-root .hs-video-bar {
+  position: absolute;
+  right: 0;
+  /* 沉到轮播块最底部、**占满整行宽度**：这样它是"页面级"的进度，
+     而不是贴在视频上的一块控件（贴在视频上总会被读成边框/播放器）。 */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  z-index: 3;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.1);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+body.hs-home .hs-root .hs-video-bar__fill {
+  display: block;
+  width: 0%;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.42);
+  /* 0.3s linear ≈ timeupdate 的触发间隔（~250ms）：
+     每个新值来到时，上一次的过渡刚好走到位 ⇒ 视觉上连续。 */
+  transition: width 0.3s linear;
+}
+/* 沉到底部后是"页面级"元素，常显即可（细、低饱和，不抢视线）。 */
+/* 显示条件由 JS 决定（.is-bar）：图片阶段显示倒计时、预告片阶段显示播放进度；
+   自动翻页关掉且没有视频时不显示。 */
+body.hs-home .hs-root.is-bar .hs-video-bar {
+  opacity: 1;
+}
+/* ------------------------------------------------------------------ *
+ * 切条：背景**瞬间替换**（闪退），新内容从侧面**推入**（移动感）。
+ *   前进从右、后退从左；64px 幅度 + 0.52s 缓出。
+ * ------------------------------------------------------------------ */
+@keyframes hs-swap-from-right {
+  from { transform: translateX(64px); }
+  to { transform: translateX(0); }
+}
+@keyframes hs-swap-from-left {
+  from { transform: translateX(-64px); }
+  to { transform: translateX(0); }
+}
+body.hs-home .hs-root.is-swap-next {
+  animation: hs-swap-from-right 0.52s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+body.hs-home .hs-root.is-swap-prev {
+  animation: hs-swap-from-left 0.52s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  body.hs-home .hs-root.is-swap-next,
+  body.hs-home .hs-root.is-swap-prev {
+    animation: none;
+  }
+}
+/* ------------------------------------------------------------------ *
+ * 静音按钮（视频面板右下角）
+ *   · 只在播放态出现，随视频一起淡入（0.8s，与面板同一条过渡）
+ *   · 40px 磨砂圆，比箭头小一档：它不是导航，是控件
+ *   · 两态图标：声波 / 斜线（.is-muted）
+ * ------------------------------------------------------------------ */
+body.hs-home .hs-root .hs-mute {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  z-index: 5;                 /* 与箭头同层：在信息层(4)之上 */
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(16, 16, 18, 0.42);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: #ffffff;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.22s ease,
+    background 0.18s ease;
+}
+body.hs-home .hs-root .hs-mute svg {
+  width: 18px;
+  height: 18px;
+}
+/* 播放态：鼠标进入轮播区才显示（常显会一直占着右下角，显脏）。
+   键盘聚焦时也显示，避免只能靠鼠标。 */
+body.hs-home .hs-root.is-trailer:hover .hs-mute,
+body.hs-home .hs-root.is-trailer .hs-mute:focus-visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+body.hs-home .hs-root.is-video-swap .hs-mute {
+  opacity: 0;
+  visibility: hidden;
+  transition: none;
+}
+body.hs-home .hs-root .hs-mute:hover {
+  background: rgba(26, 26, 30, 0.58);
+}
+body.hs-home .hs-root .hs-mute:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.75);
+  outline-offset: 2px;
+}
+/* 「点击任意区域开启声音」提示胶囊：
+   · 只在**浏览器策略**拒绝了有声播放时出现（用户自己静音不会出现）
+   · 位置在静音按钮**左侧**，不压在按钮上 —— 提示语说的是"任意区域"，
+     就不该把手指引向那个会切换状态的按钮（否则会出现"点一下就静音"的错觉）
+   · 按钮本身保持可见（否则胶囊没有依托），但不脉冲、不改语义
+   · 纯 CSS ::after，不加 DOM */
+@keyframes hs-hint-in {
+  from { opacity: 0; transform: translateY(-50%) translateX(-4px); }
+  to { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
+body.hs-home .hs-root.is-trailer .hs-mute.is-hint {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+body.hs-home .hs-root .hs-mute.is-hint::after {
+  content: "点击任意区域开启声音";
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 7px 13px;
+  border-radius: 999px;               /* 胶囊 */
+  background: rgba(16, 16, 18, 0.72);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 12.5px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: hs-hint-in 0.28s ease-out both;
+}
+body.hs-home .hs-root .hs-mute .hs-mute__slash {
+  display: none;
+}
+body.hs-home .hs-root .hs-mute.is-muted .hs-mute__wave {
+  display: none;
+}
+body.hs-home .hs-root .hs-mute.is-muted .hs-mute__slash {
+  display: inline;
+}
+/* ------------------------------------------------------------------ *
+ * 3. 箭头 + 左右边缘 hover 热区（同层 z-index:3）
+ * ------------------------------------------------------------------ */
+
+/* 热区：必须排在箭头之前入 DOM，否则同层会吃掉箭头点击 */
+body.hs-home .hs-root .hs-hotzone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  width: var(--hs-hotzone-w);
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  pointer-events: auto;
+  cursor: default;
+}
+body.hs-home .hs-root .hs-hotzone--prev {
+  left: 0;
+}
+body.hs-home .hs-root .hs-hotzone--next {
+  right: 0;
+}
+
+/* 箭头：类名必须保留官方 swiper-button-*，否则 Swiper 不注入 SVG */
+body.hs-home .hs-root .swiper-button-prev,
+body.hs-home .hs-root .swiper-button-next {
+  z-index: 5;                  /* ★ 必须在信息层(4)之上：否则左侧箭头被文字遮罩压暗 */
+  pointer-events: none;        /* ★ 箭头永不参与 hit-test（隐藏态/可见态都生效）⇒ 结构性消除"悬停反馈环"：
+                                  指针始终落在唯一的交互层 .hs-hotzone 上，点击也由热区承接 */
+  width: var(--hs-arrow-size);
+  height: var(--hs-arrow-size);
+  border-radius: 50%;
+  /* ★ 不用圆形底衬：全屏大图上"悬浮圆"像网页控件。
+     改成**径向暗晕**（中间深、边缘透明）——读作"画面边缘的可点区域"，
+     不是一颗按钮；对亮/暗背景都成立，也不会有边框割裂感。 */
+  background: radial-gradient(
+    circle at center,
+    rgba(10, 10, 12, 0.42) 0%,
+    rgba(10, 10, 12, 0.2) 46%,
+    rgba(10, 10, 12, 0) 72%
+  );
+  border: 0;
+  box-shadow: none;
+  color: #ffffff;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s cubic-bezier(0.22, 0.61, 0.36, 1),
+    background 0.18s ease;
+}
+/* 图标本身缩到直径的 ~38%，比默认小一圈，更精致 */
+body.hs-home .hs-root .swiper-button-prev svg,
+body.hs-home .hs-root .swiper-button-next svg {
+  /* 大圆小图标：32%（大箭头会显得笨） */
+  width: 32%;
+  height: 32%;
+}
+body.hs-home .hs-root .swiper-button-prev {
+  left: calc((var(--hs-hotzone-w) - var(--hs-arrow-size)) / 2);
+  right: auto;
+  transform: translateX(-6px);
+}
+body.hs-home .hs-root .swiper-button-next {
+  right: calc((var(--hs-hotzone-w) - var(--hs-arrow-size)) / 2);
+  left: auto;
+  transform: translateX(6px);
+}
+/* 可见态：**只在鼠标进入对应一侧的热区时**显示那一个箭头。
+   不再"进轮播就两个都冒出来"——那会平白干扰画面（用户反馈）。
+   .is-arrows-visible 仍保留给需要强制显示的场合；键盘焦点也显示。 */
+/* 进入**任意一侧**热区 ⇒ 两个箭头都出现（只出单侧会削掉"还能往回翻"的暗示，
+   且横向移动时会一闪一灭）。被悬停的那一侧额外加亮，见下面的强调规则。 */
+body.hs-home .hs-root.is-arrows-visible .swiper-button-prev,
+body.hs-home .hs-root.is-arrows-visible .swiper-button-next,
+body.hs-home .hs-root .hs-hotzone--prev:hover ~ .swiper-button-prev,
+body.hs-home .hs-root .hs-hotzone--prev:hover ~ .swiper-button-next,
+body.hs-home .hs-root .hs-hotzone--next:hover ~ .swiper-button-prev,
+body.hs-home .hs-root .hs-hotzone--next:hover ~ .swiper-button-next,
+body.hs-home .hs-root .swiper-button-prev:focus-visible,
+body.hs-home .hs-root .swiper-button-next:focus-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+}
+/* 不可用的一侧（首条的回退 / 末条的前进）：**保留可见**，只变暗 —— 直接隐藏会让人
+   以为"按钮没了"（真机反馈）。Swiper 会给不可用按钮加 .swiper-button-disabled。 */
+body.hs-home .hs-root .swiper-button-prev.swiper-button-disabled,
+body.hs-home .hs-root .swiper-button-next.swiper-button-disabled {
+  opacity: 0.16;
+  visibility: visible;
+  background: radial-gradient(
+    circle at center,
+    rgba(10, 10, 12, 0.2) 0%,
+    rgba(10, 10, 12, 0) 70%
+  );
+  transform: translateX(0);
+}
+/* hover 仅作可选增强：底衬 0.45 → 0.60 */
+body.hs-home .hs-root .swiper-button-prev:hover,
+body.hs-home .hs-root .swiper-button-next:hover {
+  background: radial-gradient(
+    circle at center,
+    rgba(10, 10, 12, 0.58) 0%,
+    rgba(10, 10, 12, 0.3) 48%,
+    rgba(10, 10, 12, 0) 74%
+  );
+}
+/* 箭头已 pointer-events:none，无法被自身 :hover ⇒ 加深效果改由热区 hover 触发。
+   ⚠ `~` 依赖"热区排在箭头之前"的 DOM 顺序：buildCarousel() 先插 hotzone、后插箭头，**不要改动顺序**。 */
+body.hs-home .hs-root .hs-hotzone--prev:hover ~ .swiper-button-prev,
+body.hs-home .hs-root .hs-hotzone--next:hover ~ .swiper-button-next {
+  background: radial-gradient(
+    circle at center,
+    rgba(10, 10, 12, 0.58) 0%,
+    rgba(10, 10, 12, 0.3) 48%,
+    rgba(10, 10, 12, 0) 74%
+  );
+  transform: translateX(0) scale(1.06);
+}
+body.hs-home .hs-root .swiper-button-prev .swiper-navigation-icon,
+body.hs-home .hs-root .swiper-button-next .swiper-navigation-icon {
+  stroke: #ffffff;             /* 白色图标必要时叠 1px 描边（对比度 ≥3:1） */
+  stroke-width: 0.6;
+}
+
+/* ------------------------------------------------------------------ *
+ * 4. 信息 / 控件层（独立层，容器穿透、内部控件可点）
+ * ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ *
+ * 4. 信息层（三段锚定）
+ *    整块从 --hs-logo-top 处**向下流**（flex 列），按钮跟着内容走：
+ *    ① 标题槽：Logo 按列宽缩放（高度自适应）或文字标题
+ *    ② 中段：标语 → 元信息 → 简介（固定 4 行）
+ *    ③ 按钮行：距中段 28px（不再钉在块底）
+ *    容器穿透（pointer-events:none），只有 .hs-btn 可点。
+ *    非激活节点整棵 visibility:hidden 退出命中（防「点详情进了上一条」）。
+ * ------------------------------------------------------------------ */
+
+body.hs-home .hs-root .hs-info {
+  position: absolute;
+  inset: 0;                    /* 必须有确定高度：三段的百分比锚点以它为基准 */
+  z-index: 4;
+  pointer-events: none;        /* 容器穿透；只有按钮是 auto */
+  color: var(--hs-fg);
+}
+
+body.hs-home .hs-root .hs-info__inner {
+  position: absolute;
+  left: 0;
+  /* 容器撑满，只当定位基准：logo 钉在上方基准线、buttons 钉底、
+     简介在两者之间**居中**（见 .hs-overview）。 */
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: clamp(300px, 26vw, 560px);
+  box-sizing: border-box;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: none;
+  transform: none;
+}
+body.hs-home .hs-root .hs-info__inner.is-active {
+  opacity: 1;
+  visibility: visible;
+  transition: none;
+  transform: none;
+  /* ★ 不整块吃点击：文字块会盖住左箭头的热区（真机：播放时左箭头点不动）。
+     只有按钮本身可点。 */
+  pointer-events: none;
+}
+body.hs-home .hs-root .hs-info__inner.is-active .hs-btn {
+  pointer-events: auto;
+}
+
+/* 文字遮罩：整块覆盖（标题槽顶 → 按钮底），横向左深右浅。
+   三段拆开后单块渐变会断成两截 ⇒ 改成一块整体渐变，上下 14% 羽化收边。 */
+body.hs-home .hs-root .hs-info__inner.is-active::before {
+  content: "";
+  position: absolute;
+  /* 覆盖整个轮播块高度、左缘贴 0 */
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: -12px;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 1; /* 两态常驻：不得在 .is-trailer 下切换 */
+  /* 横向：左缘最深，向右**缓慢**收干（原来 60% 处就掉到 0.58，视觉上像"一条带子"）。
+     再向右多铺 12%，边缘不会出现可辨的结束线。 */
+  background: linear-gradient(
+    90deg,
+    rgba(10, 10, 12, 0.8) 0%,
+    rgba(10, 10, 12, 0.62) 42%,
+    rgba(10, 10, 12, 0.38) 72%,
+    rgba(10, 10, 12, 0.14) 92%,
+    rgba(10, 10, 12, 0) 100%
+  );
+  /* 只在下沿羽化（上沿贴齐块顶，避免出现一条横线） */
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 92%, rgba(0, 0, 0, 0) 100%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 92%, rgba(0, 0, 0, 0) 100%);
+}
+
+/* ① 标题槽：固定 72px，Logo 与文字标题共用 ⇒ 相邻条目的上下沿都不动 */
+body.hs-home .hs-root .hs-title-slot {
+  position: absolute;
+  left: var(--hs-pad-l);
+  right: var(--hs-pad-r);
+  /* logo **下沿**落在基准线上（不同高度 logo 都在这条线收尾） */
+  bottom: calc(100% - var(--hs-logo-top));
+  display: flex;
+  align-items: flex-end;
+}
+body.hs-home .hs-root .hs-logo {
+  display: block;
+  /* ★ 按**宽度**定尺寸：Emby logo 基本是 800×310 的宽幅，
+     按高度卡 72px 会把宽度压到 186px（只占列宽 40%，真实机反馈"太小"）。
+     现在填满列宽、高度按比例自适应，再用 max-height 兜住方形 logo。 */
+  width: 100%;
+  max-width: 520px;
+  height: auto;
+  max-height: 200px;
+  object-fit: contain;
+  object-position: left center;
+  margin: 0;
+}
+body.hs-home .hs-root .hs-title-text {
+  margin: 0;
+  font-size: clamp(28px, 2.8vw, 44px);
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--hs-fg);
+  text-align: left;
+}
+
+/* ② 中段：从标题槽底 +12px 起，**高度自适应**（不再向下拉伸到按钮行）。
+   拉伸会让标题被顶在中段最上面、整块看起来"标题 + 一大段话"；
+   不拉伸则"标题→正文"的节奏与内容多少无关，剩余空间留在按钮行上方。 */
+body.hs-home .hs-root .hs-middle {
+  position: absolute;
+  left: var(--hs-pad-l);
+  right: var(--hs-pad-r);
+  top: calc(var(--hs-logo-top) + 12px);
+  bottom: calc(var(--hs-info-pad) + var(--hs-btn-h) + 28px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 0;
+  overflow: hidden;
+}
+body.hs-home .hs-root .hs-tagline {
+  /* ② 引子层：**固定占位 2 行**（42px）。内容不足也好、没有也好，
+     这一块空间永远保留 ⇒ 简介起点在所有条目上完全一致，切条不跳。 */
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 36px;
+  height: 42px;
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 400;
+  line-height: 21px;
+  color: rgba(255, 255, 255, 0.56);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+body.hs-home .hs-root .hs-info__meta {
+  /* ① 事实层：**固定占位**（不管有没有内容，这一行始终占 26px） */
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 26px;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 26px;
+  color: rgba(255, 255, 255, 0.64);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+/* 评分 / 分级：唯一允许成「胶囊」的两类，中性色，无第二套圆角 */
+body.hs-home .hs-root .hs-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--hs-pill-h);
+  padding: 0 9px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.8);
+  white-space: nowrap;
+}
+body.hs-home .hs-root .hs-pill--rating {
+  color: #ffffff;
+}
+body.hs-home .hs-root .hs-pill__star {
+  color: #f6c453;
+  font-size: 12px;
+  line-height: 1;
+}
+/* 年份 / 类型：裸文字，不给框 */
+body.hs-home .hs-root .hs-meta-plain {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.64);
+  white-space: nowrap;
+}
+body.hs-home .hs-root .hs-overview__track {
+  /* 独立合成层 + 3D 变换：滚动时只做图层平移，不重排版 */
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+}
+body.hs-home .hs-root .hs-overview__body {
+  display: block;
+}
+body.hs-home .hs-root .hs-overview {
+  /* ③ 正文层：起点**固定**（meta 26 + 标语 42 + 间距 28），从头开始排，不居中。
+     空间不足时由 overflow 截断，超长交给自动滚动（track 整体平移）。 */
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 96px;
+  bottom: 0;
+  margin: 0;
+  max-width: 100%;
+  font-size: 15.5px;
+  font-weight: 400;
+  line-height: 1.78;
+  /* 正文是"要读的东西"：0.78 在深底上会显灰（真机反馈），提到 0.88，
+     仍比标题的纯白（#fff）低一档，层次不塌。 */
+  color: rgba(255, 255, 255, 0.88);
+  letter-spacing: 0.02em;
+  white-space: pre-line;
+  overflow-wrap: break-word;
+  min-height: 0;
+  overflow: hidden;
+}
+body.hs-home .hs-root .hs-overview__p + .hs-overview__p {
+  margin-top: 0.6em;
+}
+
+/* ③ 按钮行：主按钮吃满剩余宽度，次按钮定宽 104 */
+body.hs-home .hs-root .hs-info__actions {
+  position: absolute;
+  left: var(--hs-pad-l);
+  right: var(--hs-pad-r);
+  bottom: var(--hs-info-pad);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* ⚠ 这里不写 pointer-events:auto：命中统一由 .hs-info__inner.is-active 决定，
+   子节点靠 .is-active .hs-btn 那条规则开启（否则隐形层按钮又能点到）。 */
+body.hs-home .hs-root .hs-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--hs-btn-h);
+  padding: 0 20px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.2s ease;
+}
+body.hs-home .hs-root .hs-btn--play {
+  flex: 1 1 auto;
+  background: var(--hs-fg);
+  color: #14161a;
+}
+/* 播放三角：纯 CSS，进 DOM 零成本 */
+body.hs-home .hs-root .hs-btn--play::before {
+  content: "";
+  width: 0;
+  height: 0;
+  margin-right: 8px;
+  border-left: 9px solid currentColor;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+}
+body.hs-home .hs-root .hs-btn--detail {
+  flex: 0 0 104px;
+  width: 104px;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--hs-fg);
+}
+body.hs-home .hs-root .hs-btn--play:hover {
+  background: #f2f2f4;
+}
+body.hs-home .hs-root .hs-btn--detail:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+/* 焦点态：必须独立成条（此前与 .hs-placeholder 被一个悬空逗号并在一起，
+   导致键盘聚焦时按钮被 display:none 藏掉） */
+body.hs-home .hs-root .hs-btn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+/* 位置刻度：按钮行下方 2px 细线，低成本补上「一共几条、现在第几条」 */
+body.hs-home .hs-root .hs-indicator {
+  position: absolute;
+  left: var(--hs-pad-l);
+  bottom: calc(var(--hs-info-pad) - 18px);
+  width: 44px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.24);
+  display: none;
+}
+body.hs-home .hs-root .hs-indicator.is-on {
+  display: block;
+}
+body.hs-home .hs-root .hs-indicator__fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* 播放态：信息层布局一个像素都不变，只禁止子项被压缩 */
+body.hs-home .hs-root.is-trailer .hs-info__inner > * {
+  flex: 0 0 auto;
+}
+
+/* 标题锚点的自适应已改为 JS 计算（clamp(块高 × 36%, 210, 520)），
+   原来按窗口高/宽分档的三条媒体查询已删除 —— 百分比锚点在高窗口下会越拉越靠下。 */
+
+/* 占位态：底图留空、仅一行文案，隐藏按钮 / 刻度 / 信息块 / 箭头 / 热区 */
+body.hs-home .hs-root .hs-placeholder {
+  position: absolute;
+  left: var(--hs-pad-l);
+  right: var(--hs-pad-r);
+  bottom: calc(var(--hs-info-pad) + var(--hs-btn-h) + 24px);
+  display: none;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.72);
+}
+body.hs-home .hs-root.is-placeholder .hs-placeholder {
+  display: block;
+}
+body.hs-home .hs-root.is-placeholder .hs-info__actions,
+body.hs-home .hs-root.is-placeholder .hs-indicator,
+body.hs-home .hs-root.is-placeholder .hs-info__inner,
+body.hs-home .hs-root.is-placeholder .swiper-button-prev,
+body.hs-home .hs-root.is-placeholder .swiper-button-next,
+body.hs-home .hs-root.is-placeholder .hs-hotzone {
+  display: none;
+}
+
+
+/* ------------------------------------------------------------------ *
+ * 5. 媒体库条（fixed 覆盖在顶栏首行：从 logo 右缘左对齐，与头像/设置同行，可横向滚动）
+ * ------------------------------------------------------------------ */
+
+body.hs-home .hs-libbar {
+  position: fixed;
+  /* ★ 几何由 JS 量「顶栏第一行（logo / 右侧图标所在行）」后写入 `documentElement`：
+     --hs-libbar-top = 该行顶边相对顶栏顶边的偏移（含 .skinHeader 的 padding-top），
+     --hs-libbar-h   = 该行实测高度。
+     兜底值只是 Emby 规则的等价常量（padding-top = max(1.2em, safe-area)、行 min-height = 3.127em），
+     测不到时也不会塌。⚠ 不要再写死 0.18em / 3.1em —— 那比真实行高约 1em，是"高度一直不对"的根因。 */
+  top: var(--hs-libbar-top, max(1.2em, env(safe-area-inset-top, 0px)));
+  height: var(--hs-libbar-h, 3.127em);
+  /* ★ 左对齐：从 Emby logo 右缘起（真机讨论后的选择）——
+     没有框之后，居中的一撮文字会"悬空"；左对齐给它一个锚点，读起来是"品牌 → 库"的同一条导航线，
+     而且新增/减少库时只有右端在变，不会整排左右漂。量不到左起点时退回居中。 */
+  left: var(--hs-libbar-left, 50%);
+  transform: translateX(var(--hs-libbar-tx, -50%));
+  width: auto;
+  /* 可见态**不做宽度夹取**：夹宽度会让拖动时条目被瞬间截断（没有过渡），
+     看起来就是"直接消失"。放不下完全交给 `is-too-narrow` 的抽屉动画。 */
+  max-width: min(70vw, 1080px);
+  display: flex;
+  align-items: center;
+  /* ★ 设计取舍：**不画框**。
+     前面几轮一直在给"框"找形状（圆角/斜面/垂下来），但顶栏本身已经有一条纵向磨砂渐变，
+     再叠一个半透明几何体，等于两套明暗系统互相打架 —— 这就是"不自然"的根源。
+     现在只做排版：文字标签直接坐在顶栏渐变上，靠字重/字距/阴影建立层次。
+     条自身无底、无边框、无阴影。 */
+  padding: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  overflow: visible;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* ★ 整栏渐变磨砂：**顶部深 → 往下越浅**，且渐变只铺到「第一行下方一点」为止
+   （`.skinHeader` 在首页是 9.11em 两行高；若是铺满整条，可见区只吃到最深的开头 ⇒ 看着像实心色块）。
+   高度按量出来的行几何收口：--hs-libbar-top + --hs-libbar-h + 0.9em 的淡出尾巴。
+   ⚠ 用 background-image + background-color:transparent（不用 background 简写）：
+     简写会把 Emby 滚动后的实色底一起清掉，但我们只想清底、保留自己的渐变。 */
+body.hs-home .skinHeader {
+  /* ★ 顶栏向右多铺「一个滚动条宽」，把右上角那个缺口补掉（参考实现：.skinHeader-withBackground{right:0}）。
+     fixed 元素的 100% = 视口 − 滚动条 ⇒ 100vw − 100% 正好是滚动条宽，不需要 JS 量测。
+     代价：滚动条最上面那一小截会被磨砂盖住（视觉上像「滚动条从顶栏下方开始」），宽度只有 0.3em，可接受。 */
+  right: calc(-1 * (100vw - 100%));
+  background-image: linear-gradient(
+    180deg,
+    rgba(14, 14, 18, 0.9) 0%,
+    rgba(14, 14, 18, 0.84) 55%,
+    rgba(14, 14, 18, 0.46) 80%,
+    rgba(14, 14, 18, 0) 100%
+  ) !important;
+  background-color: transparent !important;
+  background-repeat: no-repeat !important;
+  background-size: 100% calc(var(--hs-libbar-top, max(1.2em, env(safe-area-inset-top, 0px))) + var(--hs-libbar-h, 3.127em) + 0.9em) !important;
+  /* ★ 必须关掉 Emby 滚动态的整栏模糊：滚过之后主题会给 `.skinHeader` 加
+     `.headroom-scrolling` + `backdrop-filter: blur(1.5em)`，模糊范围是整个顶栏盒子（9.11em）
+     ⇒ 从下往上滚时会出现一条很粗的磨砂（真机反馈）。磨砂只由上面那条渐变提供。 */
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+/* ★ 纵向滚动条：保留原生（只做低干扰美化，见文件末尾「滚动条」一节）。
+   轮播在文档流里，宽度天然扣掉滚动条占位 ⇒ 不需要隐藏、也不需要任何避让变量。
+   ⚠ 下面 `.hs-libbar__track` 的横向滚动条隐藏是我们自己的库条专用，不属于首页纵向滚动条，保留。 */
+body.hs-home .hs-libbar__track {
+  display: flex;
+  align-items: center;
+  gap: 0.15em;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0 auto;              /* 条铺满时按钮组居中；内容超宽时 auto 边距塌成 0，正常横向滚动 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  user-select: none;           /* 鼠标拖动横向滚动时不选中条目文字 */
+  /* 隐藏滚动条仅用 ::-webkit-scrollbar 兜底（Chromium 100 不支持 scrollbar-width） */
+}
+body.hs-home .hs-libbar__track::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+/* ★ 按钮 = 纯文字标签（对标 Emby 原生 tab 的排版语言，但去掉选中高亮）：
+   - 字重 500、字号 1.15em；
+   - 文字亮度 .88：与 emby logo 同一层白；
+   - text-shadow 保证亮背景上也读得清，而不是靠加底色；
+   - 悬停反馈不画在按钮上，改由「条级高亮层」.hs-libbar__hover 统一画（见下）。 */
+body.hs-home .hs-libbar__item {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 0.9em;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 1.15em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7), 0 0 10px rgba(0, 0, 0, 0.28);
+  transition: color 0.15s ease;
+}
+body.hs-home .hs-libbar__item:hover {
+  color: #ffffff;
+}
+
+/* ★ 悬停高亮层（真机：指示器应该在整条横栏的最顶部）：
+   画在条这一层而不是按钮里 —— 按钮在 track 内，track 有 overflow，向上探不出去。
+   高度 = 条高 + 顶栏顶部的那段内边距（--hs-libbar-top），所以它从**顶栏最顶边**一直铺到条底；
+   顶部 3px 粗条作为指示器，宽度由 JS 对齐到当前悬停的库名。 */
+body.hs-home .hs-libbar__hover {
+  position: absolute;
+  left: 0;
+  width: 0;
+  top: calc(-1 * var(--hs-libbar-top, 0px));
+  bottom: 0;
+  z-index: -1;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.05) 100%);
+  border-top: 4px solid rgba(255, 255, 255, 0.92);
+  border-radius: 0 0 2px 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease, left 0.15s ease, width 0.15s ease;
+  pointer-events: none;
+}
+body.hs-home .hs-libbar__hover.is-on {
+  opacity: 1;
+}
+/* ★ 竖线/分隔线已删：没有框之后，分隔线只会变成"悬空的小竖条"，反而更乱；用间距分隔。 */
+/* ★ 竖线分隔、按钮磨砂、hover 高亮都保持删除状态；按钮只留"框 + 亮文字"。 */
+/* ★ `.is-active` 不再有视觉高亮（点击语义已改为"进入该媒体库"，
+   再高亮"轮播当前取数用的库"只会误导；类保留在 DOM 仅作信息标记） */
+/* 滚过一屏（与轮播的 is-hero-out 同步）：媒体库条是 fixed 的，必须跟着隐藏，
+   否则会一直浮在滚动后的内容上方 */
+/* ★ 放不下 ⇒ **向左抽屉回收**（真机："回收动画应该是向左的抽屉回收"）：
+   clip-path 加在 `.hs-libbar__clip`（只包住条目区）上 —— 右侧内缩到 100% 时，
+   可见部分像抽屉被推回去一样从右往左收掉；出现时反向展开。
+   ⚠ 绝不能加在 `.hs-libbar` 上：那会把向上探到顶栏最顶边的悬停高亮层一起裁掉
+     （真机 bug："高亮的指示框没有了"）。 */
+body.hs-home .hs-libbar__clip {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  clip-path: inset(0);
+  transition: clip-path 0.28s ease;
+}
+/* ★ 抽屉回收：先让 `__clip` 把内容自右向左"推回去"（0.28s），最后 0.1s 才淡出。
+   顺序很重要：如果 opacity 一开始就掉，看不到抽屉效果，观感就是"直接消失"。 */
+body.hs-home .hs-libbar.is-too-narrow {
+  transform: translateX(calc(var(--hs-libbar-tx, -50%) - 6px));
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.1s ease 0.18s, transform 0.28s ease, visibility 0s linear 0.28s;
+}
+body.hs-home .hs-libbar.is-too-narrow .hs-libbar__clip {
+  clip-path: inset(0 100% 0 0);
+}
+body.hs-home .hs-libbar.is-hero-out {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+/* ★ 左右渐隐遮罩已删：磨砂改由按钮自身提供后，这两块 24px 深色渐变只会破坏按钮框的轮廓。 */
+
+/* ------------------------------------------------------------------ *
+ * 6. 设置入口（挂 .mainDrawer 导航列表） + 设置面板
+ * ------------------------------------------------------------------ */
+
+/* 顶栏快捷入口：只在首页出现，贴在右侧图标组最左边。
+   图标走 Emby 自带的 Material Icons（.md-icon），尺寸/颜色沿用顶栏。 */
+body.hs-home .headerRight .hs-header-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: auto;
+  height: auto;
+  /* 完全对齐 Emby 原生图标按钮的度量（.paper-icon-button-light）：
+     font-size 继承顶栏字号、padding .556em、margin 0 .29em ⇒ 网页端/客户端字号不同也自动一致 */
+  margin: 0 0.29em;
+  padding: 0.556em;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+body.hs-home .headerRight .hs-header-settings:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+/* 图标尺寸也用 em：Emby 的原生图标按钮是 `.paper-icon-button-light > i { font-size: 1.6696em }`，
+   所以 1.6696em 才能和它们同步缩放（写死 px 会在网页端/客户端之间跑偏）。
+   描边 2.1 是按「视觉笔画 ≈ 原生 2px」反推的（24 视口）。 */
+body.hs-home .headerRight .hs-header-settings .hs-ico {
+  width: 1.6696em;
+  height: 1.6696em;
+}
+body.hs-home .headerRight .hs-header-settings:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+/* ---- 线性图标：SVG 蒙版（图标字体在 22px 下只有实心字重，做不出描边手感）---- */
+.hs-ico {
+  display: inline-block;
+  width: 20px;   /* ★ 必须有尺寸：mask 元素没有宽高就是 0×0（踩过） */
+  height: 20px;
+  flex: 0 0 auto;
+  background-color: currentColor;
+  -webkit-mask: var(--hs-ico) center / contain no-repeat;
+  mask: var(--hs-ico) center / contain no-repeat;
+}
+.hs-ico--carousel {
+  --hs-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.4' y='7.2' width='14.4' height='12.2' rx='2.6'/%3E%3Cpath d='M6.8 3.6h12.4a2.4 2.4 0 0 1 2.4 2.4v11.6'/%3E%3Cpath d='M9.4 10.6v5l4.4-2.5z'/%3E%3C/svg%3E");
+}
+
+/* ⚠ 面板会出现在**没有 body.hs-home** 的设置页：主题变量必须自带一份，
+   否则 --hs-accent 等变量全是空值 ⇒ 保存按钮透明、开关不变色。 */
+.hs-panel {
+  color-scheme: dark; /* ★ 关键：原生 <select> 的弹层由浏览器绘制，只认 color-scheme，
+                         不认 background-color ⇒ 否则白底白字，只有悬停高亮才看得见 */
+  --hs-panel-fg: #ffffff;
+  --hs-fg: #ffffff;
+  --hs-accent: #5b8def;
+}
+
+.hs-panel__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(6, 8, 12, 0.55);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+.hs-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  width: min(440px, 94vw);
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #16181e 0%, #101216 100%);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--hs-panel-fg);
+  box-shadow: -18px 0 48px rgba(0, 0, 0, 0.55);
+  animation: hs-panel-in 0.18s ease-out;
+}
+@keyframes hs-panel-in {
+  from {
+    transform: translateX(20px);
+    opacity: 0.35;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.hs-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.hs-panel__badge {
+  width: 27px;
+  height: 27px;
+  opacity: 0.95;
+}
+.hs-panel__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.hs-panel__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.hs-panel__subtitle {
+  font-size: 12px;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.48);
+}
+.hs-panel__close {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: transparent;
+  color: var(--hs-panel-fg);
+  font-size: 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease;
+}
+.hs-panel__close:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.hs-panel__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.hs-panel__body emby-select,
+.hs-panel__body emby-input,
+.hs-panel__body select,
+.hs-panel__body input[type="number"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+.hs-panel__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* 回退路径专用（Emby 的自定义元素不可用时我们才建原生 select/input）：
+   只匹配原生标签，不会和宿主 .emby-select/.emby-input 打架。 */
+.hs-panel__body select,
+.hs-panel__body input[type="number"] {
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+  font-size: 14px;
+  outline: none;
+}
+.hs-panel__body select:focus,
+.hs-panel__body input[type="number"]:focus {
+  border-color: var(--hs-accent);
+}
+/* 弹层里的每一项也要显式上色（Windows 上部分 Chromium 版本对 color-scheme 支持不全） */
+.hs-panel__body option {
+  background-color: #1b1e24;
+  color: #ffffff;
+}
+/* Emby 原生 emby-select 内部如果包着 select，同样兜一层 */
+.hs-panel__body emby-select select {
+  color: #ffffff;
+  background-color: transparent;
+}
+.hs-panel__label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.55);
+}
+/* 字段下方的解释文字（不参与表单值，仅说明语义） */
+.hs-panel__hint {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.42);
+}
+/* 开关：把 checkbox 画成滑杆，避免浏览器默认小方块 */
+.hs-panel__body input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 42px;
+  height: 24px;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  position: relative;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.hs-panel__body input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform 0.15s ease;
+}
+.hs-panel__body input[type="checkbox"]:checked {
+  background: var(--hs-accent);
+}
+.hs-panel__body input[type="checkbox"]:checked::after {
+  transform: translateX(18px);
+}
+/* 保存区：底部整条高亮栏 + 通栏主按钮。
+   原来是小按钮缩在右下角，末端空一大片，用户反馈「容易被忽视」。
+   现在：通栏、42px、主色、带一点点提亮，且不随表单滚动（body 才滚）。 */
+.hs-panel__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 20px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.25);
+}
+.hs-panel__hint {
+  min-height: 16px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: #8fe3a1;
+  text-align: center;
+}
+.hs-panel__save {
+  width: 100%;
+  height: 42px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--hs-accent);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+.hs-panel__save:hover {
+  filter: brightness(1.12);
+}
+
+/* ------------------------------------------------------------------ *
+ * 滚动条：低干扰样式（对称参考 emby-swiper-trailer.js 的做法）
+ *
+ * 那份插件的观感之所以好，关键一行是：`@media (pointer: fine) ::-webkit-scrollbar{width:.3em}`
+ * —— 它不补缝，直接把滚动条收窄到几像素，右边那一条的视觉重量就低到可以忽略。
+ * 我们之前是 10px + 亮背景，缝永远显眼。
+ * 所以：桌面（pointer: fine）收成 0.3em；触摸端直接隐藏（不占位）。
+ * 注意 `::-webkit-scrollbar` 只改外观、改不了占位；宽度变了垫层的 `100vw - 100%` 会自己跟着变。
+ * ------------------------------------------------------------------ */
+@media (pointer: fine) {
+  html::-webkit-scrollbar,
+  html *::-webkit-scrollbar {
+    width: 0.3em;
+    height: 0.3em;
+  }
+  html::-webkit-scrollbar-track,
+  html::-webkit-scrollbar-track-piece,
+  html *::-webkit-scrollbar-track,
+  html *::-webkit-scrollbar-track-piece {
+    background: transparent !important;
+  }
+  html::-webkit-scrollbar-thumb,
+  html *::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.3) !important;
+    border-radius: 999px;
+  }
+  html::-webkit-scrollbar-thumb:hover,
+  html *::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.5) !important;
+  }
+  html::-webkit-scrollbar-corner,
+  html *::-webkit-scrollbar-corner {
+    background: transparent !important;
+  }
+}
+
+/* 首页的滚动条轨道常驻暗色：轨道就是右侧那条缝本身。
+   之前轨道透明 ⇒ 后面是背景磨砂层（亮）时，那一条就跟着发亮、和顶栏/轮播接不上。
+   现在给它一个稳定的暗底，观感不再随背景图变化（真机需求：「滚轮条一直是暗色背景」）。
+   只作用于首页：其它页面（详情/弹层）的滚动条保持原生透明，避免误伤。 */
+body.hs-home ::-webkit-scrollbar-track,
+body.hs-home ::-webkit-scrollbar-track-piece {
+  background-color: rgba(10, 10, 12, 0.6) !important;
+}
+body.hs-home ::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.26) !important;
+}
+/* 触摸端（手机/平板）：经典滚动条是**占位**的，小屏上占比过大 ⇒ 直接隐藏。
+   触摸滚动本就不需要常驻滚动条；隐藏后不占位，垫层 `100vw - 100%` 随之为 0。 */
+@media (hover: none) and (pointer: coarse) {
+  html::-webkit-scrollbar,
+  html *::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none !important;
+  }
+}
+

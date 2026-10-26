@@ -1,0 +1,16 @@
+{
+  "name": "emby-js-glow",
+  "private": true,
+  "description": "HomeSwiper 构建环境（作者态）。node .build/assemble.js 产出单文件成品。",
+  "type": "module",
+  "scripts": {
+    "build": "node .build/assemble.js",
+    "verify": "node .build/verify-s3.mjs && node .build/verify-s4.mjs"
+  },
+  "devDependencies": {
+    "acorn": "8.19.0",
+    "esbuild": "0.24.2",
+    "lightningcss": "1.33.0",
+    "swiper": "12.2.0"
+  }
+}
