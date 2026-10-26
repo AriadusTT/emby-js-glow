@@ -3515,6 +3515,7 @@ export class HomeSwiper {
     st.setProperty("--hs-video-h", vh ? vh + "px" : "0px");
     // 满高、贴顶：不需要垂直留白
     st.setProperty("--hs-video-top", "0px");
+    this.syncVideoVisibility();
     // 位置没了（窗口太窄/关掉预告片）才收；**尺寸变化不收** ——
     // 面板宽高是 CSS 变量，video 会自己跟着缩放，停播反而让画面闪没（真机 bug）。
     if (!vw) {
@@ -3880,6 +3881,28 @@ export class HomeSwiper {
     return true;
   }
 
+  /**
+   * 可见性自愈：**正在播放且面板有尺寸**时，必须同时满足
+   *   · 没有 is-video-swap（否则 opacity:0 ⇒ 有声音没画面）
+   *   · 有 is-trailer（否则面板不显示）
+   * 播放期间每帧调用一次（只是几次 classList.contains，成本可忽略），
+   * 目的是把"偶发漏加/漏删类"在 1 帧内修回来，而不是靠调用顺序保证。
+   */
+  syncVideoVisibility() {
+    const cls = this.root && this.root.classList;
+    if (!cls) return;
+    const shouldShow = this._videoIndex >= 0 && this._videoW > 0;
+    if (!shouldShow) return;
+    if (cls.contains("is-video-swap")) {
+      cls.remove("is-video-swap");
+      this.tlog(() => "自愈：清掉残留的 is-video-swap（视频重新可见）");
+    }
+    if (!cls.contains("is-trailer")) {
+      cls.add("is-trailer");
+      this.tlog(() => "自愈：补上缺失的 is-trailer");
+    }
+  }
+
   /** 逐帧驱动进度条：timeupdate 只有 ~4Hz，配合 CSS 过渡仍有台阶感。 */
   startBarLoop(v) {
     this.stopBarLoop();
@@ -3887,6 +3910,7 @@ export class HomeSwiper {
     if (!w || typeof w.requestAnimationFrame !== "function") return;
     const tick = () => {
       if (!this.videoEl || this.videoEl !== v || this._videoIndex < 0 || v.paused) return;
+      this.syncVideoVisibility();
       this.syncVideoBar(v);
       this._barRaf = w.requestAnimationFrame(tick);
     };
@@ -4071,8 +4095,19 @@ export class HomeSwiper {
   stopTrailer(reason, keepPaused) {
     this.clearTimer("trailer-start");
     this.clearTimer("trailer-ready");
+    const cls = this.root && this.root.classList;
+    const playing = this._videoIndex >= 0 || !!(cls && cls.contains("is-trailer"));
+    if (!playing) {
+      // ★ 没有东西可收时**绝不能**加 is-video-swap：
+      //   它是 opacity:0 且无过渡，一旦留下，下一次预告片"有声音没画面"（真机偶发）。
+      //   同时顺手清掉可能残留的该类（自愈）。
+      if (cls) cls.remove("is-video-swap");
+      this.stopBarLoop();
+      this.resetPageBar();
+      return;
+    }
     // 退出**瞬时**：进入才淡入，退出一律同帧消失（is-video-swap = opacity 0 且无过渡）
-    if (this.root && this.root.classList) this.root.classList.add("is-video-swap");
+    if (cls) cls.add("is-video-swap");
     this.stopBarLoop();
     this.resetPageBar();
     if (typeof this._unmuteHandler === "function") {
@@ -4081,9 +4116,6 @@ export class HomeSwiper {
       } catch (e) {
         /* ignore */
       }
-    }
-    if (this._videoIndex < 0 && !(this.root && this.root.classList && this.root.classList.contains("is-trailer"))) {
-      return;
     }
     this.tlog(() => "stopTrailer(): " + (reason || ""));
     this._videoIndex = -1;

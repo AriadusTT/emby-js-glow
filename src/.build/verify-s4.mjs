@@ -2229,6 +2229,28 @@ await (async () => {
   app.teardown();
 })();
 
+// ③v0 有声音没画面：残留的 is-video-swap 必须被自愈
+await (async () => {
+  FakeSwiper.instances = [];
+  const state = makeState({});
+  const app = makeApp(state);
+  await app.start();
+  app.settings = Object.assign({}, app.settings, { PlayTrailer: true });
+  app.layoutVideo(900, 2400);
+  ok("未播放时 stopTrailer 不留下 is-video-swap", (() => {
+    app._videoIndex = -1;
+    app.root.classList.remove("is-trailer");
+    app.stopTrailer("test");
+    return !app.root.classList.contains("is-video-swap");
+  })());
+  app.root.classList.add("is-video-swap"); // 模拟残留
+  app._videoIndex = 3;
+  app.syncVideoVisibility();
+  ok("自愈：清掉 is-video-swap", !app.root.classList.contains("is-video-swap"));
+  ok("自愈：补上 is-trailer", app.root.classList.contains("is-trailer"));
+  app.teardown();
+})();
+
 // ③v 窗口从"放不下"恢复到"放得下"⇒ 给当前这张重新排队
 await (async () => {
   FakeSwiper.instances = [];
