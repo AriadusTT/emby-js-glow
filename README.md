@@ -56,9 +56,6 @@ npm run build    # 产出 src/HomeSwiper.js
 npm run verify   # 可选：跑数据层与轮播主体的验证脚本
 ```
 
-> 根目录的 `HomeSwiper.js` 是构建产物。**改代码改 `src/.build/`**，重新构建后把 `src/HomeSwiper.js` 覆盖到根目录即为发布。
-> 构建是**可复现**的：同样的源码产出的文件除「构建时间」外完全一致。
-
 ## 通用安装步骤
 
 对任何模块都一样：
